@@ -7,6 +7,8 @@ import (
 	v1 "k8s.io/api/core/v1"
 	networkingv1 "k8s.io/api/networking/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/labels"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	"k8s.io/apimachinery/pkg/util/wait"
 	coreinformers "k8s.io/client-go/informers/core/v1"
@@ -203,6 +205,111 @@ func (c *Controller) syncNetworkPolicy(key string) error {
 	klog.Infof("Creating networkpolicy %s on namespace %s", name, namespace)
 	klog.Infof("Network Policy %+v", networkpolicy)
 
+	// This selects particular Pods in the same namespace as the NetworkPolicy which
+	// should be allowed as ingress sources or egress destinations.
+	podSelector, err := metav1.LabelSelectorAsSelector(&networkpolicy.Spec.PodSelector)
+	if err != nil {
+		return err
+	}
+	pods, err := c.podLister.Pods(namespace).List(podSelector)
+	if err != nil {
+		c.eventRecorder.Eventf(networkpolicy, v1.EventTypeWarning, "FailedToListPods",
+			"Error listing Pods for Network Policy %s/%s: %v", namespace, name, err)
+		return err
+	}
+
+	policyIPs := []string{}
+	for _, pod := range pods {
+		policyIPs = append(policyIPs, getPodIPs(pod.Status)...)
+	}
+
+	// policyTypes: Each NetworkPolicy includes a policyTypes list which may include
+	// either Ingress, Egress, or both. The policyTypes field indicates whether or not
+	// the given policy applies to ingress traffic to selected pod, egress traffic from
+	// selected pods, or both. If no policyTypes are specified on a NetworkPolicy then
+	// by default Ingress will always be set and Egress will be set if the NetworkPolicy
+	// has any egress rules.
+	defaultIngress := len(networkpolicy.Spec.Ingress) == 0
+
+	// ingress: Each NetworkPolicy may include a list of allowed ingress rules.
+	// Each rule allows traffic which matches both the from and ports sections.
+	// The example policy contains a single rule, which matches traffic on a single port,
+	// from one of three sources, the first specified via an ipBlock,
+	// the second via a namespaceSelector and the third via a podSelector.
+
+	for _, ingress := range networkpolicy.Spec.Ingress {
+		for _, from := range ingress.From {
+
+			nsSelector, err := metav1.LabelSelectorAsSelector(from.NamespaceSelector)
+			if err != nil {
+				return err
+			}
+
+			namespaces, err := c.namespaceLister.List(nsSelector)
+			if err != nil {
+				return err
+			}
+
+			podSelector, err := metav1.LabelSelectorAsSelector(&networkpolicy.Spec.PodSelector)
+			if err != nil {
+				return err
+			}
+
+			for _, ns := range namespaces {
+				pods, err := c.podLister.Pods(ns.String()).List(podSelector)
+				if err != nil {
+					return err
+				}
+			}
+			// This selects particular IP CIDR ranges to allow as ingress sources or egress destinations
+			if from.IPBlock != nil {
+
+			}
+		}
+
+		for _, port := range ingress.Ports {
+
+		}
+
+	}
+	// egress: Each NetworkPolicy may include a list of allowed egress rules.
+	// Each rule allows traffic which matches both the to and ports sections.
+	// The example policy contains a single rule, which matches traffic on a
+	// single port to any destination in 10.0.0.0/24.
+	for _, egress := range networkpolicy.Spec.Egress {
+		for _, to := range egress.To {
+			nsSelector, err := metav1.LabelSelectorAsSelector(to.NamespaceSelector)
+			if err != nil {
+				return err
+			}
+
+			namespaces, err := c.namespaceLister.List(nsSelector)
+			if err != nil {
+				return err
+			}
+
+			podSelector, err := metav1.LabelSelectorAsSelector(&networkpolicy.Spec.PodSelector)
+			if err != nil {
+				return err
+			}
+
+			for _, ns := range namespaces {
+				pods, err := c.podLister.Pods(ns.String()).List(podSelector)
+				if err != nil {
+					return err
+				}
+			}
+			// This selects particular IP CIDR ranges to allow as ingress sources or egress destinations
+			if to.IPBlock != nil {
+
+			}
+		}
+
+		for _, port := range egress.Ports {
+
+		}
+
+	}
 	return nil
 }
 
@@ -251,10 +358,10 @@ func (c *Controller) onNetworkPolicyDelete(obj interface{}) {
 func (c *Controller) onNamespaceAdd(obj interface{}) {
 	namespace := obj.(*v1.Namespace)
 	if namespace == nil {
-		utilruntime.HandleError(fmt.Errorf("invalid EndpointSlice provided to onNamespaceAdd()"))
+		utilruntime.HandleError(fmt.Errorf("invalid Namespace provided to onNamespaceAdd()"))
 		return
 	}
-	c.queueServiceForEndpointSlice(namespace)
+	c.queueNetworkPoliciesForNamespace(namespace)
 }
 
 // onNamespaceUpdate queues a sync for the relevant Service for a sync
@@ -267,7 +374,7 @@ func (c *Controller) onNamespaceUpdate(prevObj, obj interface{}) {
 		!namespace.GetDeletionTimestamp().IsZero() {
 		return
 	}
-	c.queueServiceForEndpointSlice(namespace)
+	c.queueNetworkPoliciesForNamespace(namespace)
 }
 
 // onNamespaceDelete queues a sync for the relevant Service for a sync if the
@@ -289,8 +396,22 @@ func (c *Controller) onNamespaceDelete(obj interface{}) {
 	}
 
 	if namespace != nil {
-		//c.queueServiceForEndpointSlice(namespace)
+		c.queueNetworkPoliciesForNamespace(namespace)
 	}
+}
+
+// queueNetworkPoliciesForNamespace queue the network policies affected by the namespace changes
+func (c *Controller) queueNetworkPoliciesForNamespace(namespace *v1.Namespace) {
+	networkpolicies, err := c.networkpolicyLister.List(labels.Everything())
+	if err != nil {
+		return
+	}
+	for _, np := range networkpolicies {
+		// enqueue all the network policies that affect the namespace
+
+		c.queue.Add(np)
+	}
+
 }
 
 // onPodAdd queues a sync for the relevant Service for a sync
@@ -300,7 +421,7 @@ func (c *Controller) onPodAdd(obj interface{}) {
 		utilruntime.HandleError(fmt.Errorf("invalid EndpointSlice provided to onPodAdd()"))
 		return
 	}
-	c.queueServiceForEndpointSlice(pod)
+	c.queueNetworkPoliciesForPod(pod)
 }
 
 // onPodUpdate queues a sync for the relevant Service for a sync
@@ -313,7 +434,7 @@ func (c *Controller) onPodUpdate(prevObj, obj interface{}) {
 		!pod.GetDeletionTimestamp().IsZero() {
 		return
 	}
-	c.queueServiceForEndpointSlice(pod)
+	c.queueNetworkPoliciesForPod(pod)
 }
 
 // onPodDelete queues a sync for the relevant Service for a sync if the
@@ -335,28 +456,20 @@ func (c *Controller) onPodDelete(obj interface{}) {
 	}
 
 	if pod != nil {
-		c.queueServiceForEndpointSlice(pod)
+		c.queueNetworkPoliciesForPod(pod)
 	}
 }
 
 // queueServiceForEndpointSlice attempts to queue the corresponding Service for
 // the provided EndpointSlice.
-func (c *Controller) queueServiceForEndpointSlice(namespace *v1.Pod) {
-	key, err := networkpolicyControllerKey(namespace)
+func (c *Controller) queueNetworkPoliciesForPod(pod *v1.Pod) {
+	networkpolicies, err := c.networkpolicyLister.List(labels.Everything())
 	if err != nil {
-		utilruntime.HandleError(fmt.Errorf("couldn't get key for EndpointSlice %+v: %v", namespace, err))
 		return
 	}
+	for _, np := range networkpolicies {
+		// enqueue all the network policies that affect the pod
+		c.queue.Add(np)
 
-	c.queue.Add(key)
-}
-
-// networkpolicyControllerKey returns a controller key for a Service but derived from
-// an EndpointSlice.
-func networkpolicyControllerKey(namespace *v1.Pod) (string, error) {
-	if namespace == nil {
-		return "", fmt.Errorf("nil EndpointSlice passed to networkpolicyControllerKey()")
 	}
-
-	return fmt.Sprintf("%s/%s", namespace.Namespace, "networkpolicyName"), nil
 }
