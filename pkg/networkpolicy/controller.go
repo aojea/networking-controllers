@@ -402,16 +402,36 @@ func (c *Controller) onNamespaceDelete(obj interface{}) {
 
 // queueNetworkPoliciesForNamespace queue the network policies affected by the namespace changes
 func (c *Controller) queueNetworkPoliciesForNamespace(namespace *v1.Namespace) {
+	nsLabels := labels.Set(namespace.GetLabels())
 	networkpolicies, err := c.networkpolicyLister.List(labels.Everything())
 	if err != nil {
 		return
 	}
 	for _, np := range networkpolicies {
 		// enqueue all the network policies that affect the namespace
-
-		c.queue.Add(np)
+		for _, ingress := range np.Spec.Ingress {
+			for _, from := range ingress.From {
+				nsSelector, err := metav1.LabelSelectorAsSelector(from.NamespaceSelector)
+				if err != nil {
+					continue
+				}
+				if nsSelector.Matches(nsLabels) {
+					c.queue.Add(np)
+				}
+			}
+		}
+		for _, egress := range np.Spec.Egress {
+			for _, to := range egress.To {
+				nsSelector, err := metav1.LabelSelectorAsSelector(to.NamespaceSelector)
+				if err != nil {
+					continue
+				}
+				if nsSelector.Matches(nsLabels) {
+					c.queue.Add(np)
+				}
+			}
+		}
 	}
-
 }
 
 // onPodAdd queues a sync for the relevant Service for a sync
@@ -463,13 +483,63 @@ func (c *Controller) onPodDelete(obj interface{}) {
 // queueServiceForEndpointSlice attempts to queue the corresponding Service for
 // the provided EndpointSlice.
 func (c *Controller) queueNetworkPoliciesForPod(pod *v1.Pod) {
+	podLabels := labels.Set(pod.GetLabels())
+	namespace, err := c.namespaceLister.Get(pod.Namespace)
+	if err != nil {
+		return
+	}
+	nsLabels := labels.Set(namespace.GetLabels())
 	networkpolicies, err := c.networkpolicyLister.List(labels.Everything())
 	if err != nil {
 		return
 	}
 	for _, np := range networkpolicies {
-		// enqueue all the network policies that affect the pod
-		c.queue.Add(np)
+		if np.Namespace == pod.Namespace {
+			podSelector, err := metav1.LabelSelectorAsSelector(&np.Spec.PodSelector)
+			if err != nil {
+				continue
+			}
+			if podSelector.Matches(podLabels) {
+				c.queue.Add(np)
+			}
+		}
+		// enqueue all the network policies that affect the namespace
+		for _, ingress := range np.Spec.Ingress {
+			for _, from := range ingress.From {
+				nsSelector, err := metav1.LabelSelectorAsSelector(from.NamespaceSelector)
+				if err != nil {
+					continue
+				}
+				if !nsSelector.Matches(nsLabels) {
+					continue
+				}
+				podSelector, err := metav1.LabelSelectorAsSelector(from.PodSelector)
+				if err != nil {
+					continue
+				}
+				if podSelector.Matches(podLabels) {
+					c.queue.Add(np)
+				}
 
+			}
+		}
+		for _, egress := range np.Spec.Egress {
+			for _, to := range egress.To {
+				nsSelector, err := metav1.LabelSelectorAsSelector(to.NamespaceSelector)
+				if err != nil {
+					continue
+				}
+				if !nsSelector.Matches(nsLabels) {
+					continue
+				}
+				podSelector, err := metav1.LabelSelectorAsSelector(to.PodSelector)
+				if err != nil {
+					continue
+				}
+				if podSelector.Matches(podLabels) {
+					c.queue.Add(np)
+				}
+			}
+		}
 	}
 }
