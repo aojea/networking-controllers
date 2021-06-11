@@ -429,7 +429,12 @@ func (c *Controller) queueNetworkPoliciesForNamespace(namespace *v1.Namespace) {
 					continue
 				}
 				if nsSelector.Matches(nsLabels) {
-					c.queue.Add(np)
+					key, err := cache.MetaNamespaceKeyFunc(np)
+					if err != nil {
+						utilruntime.HandleError(fmt.Errorf("couldn't get key for object %+v: %v", np, err))
+						return
+					}
+					c.queue.Add(key)
 				}
 			}
 		}
@@ -440,7 +445,12 @@ func (c *Controller) queueNetworkPoliciesForNamespace(namespace *v1.Namespace) {
 					continue
 				}
 				if nsSelector.Matches(nsLabels) {
-					c.queue.Add(np)
+					key, err := cache.MetaNamespaceKeyFunc(np)
+					if err != nil {
+						utilruntime.HandleError(fmt.Errorf("couldn't get key for object %+v: %v", np, err))
+						return
+					}
+					c.queue.Add(key)
 				}
 			}
 		}
@@ -513,7 +523,12 @@ func (c *Controller) queueNetworkPoliciesForPod(pod *v1.Pod) {
 				continue
 			}
 			if podSelector.Matches(podLabels) {
-				c.queue.Add(np)
+				key, err := cache.MetaNamespaceKeyFunc(np)
+				if err != nil {
+					utilruntime.HandleError(fmt.Errorf("couldn't get key for object %+v: %v", np, err))
+					return
+				}
+				c.queue.Add(key)
 			}
 		}
 		// enqueue all the network policies that affect the pod
@@ -531,7 +546,12 @@ func (c *Controller) queueNetworkPoliciesForPod(pod *v1.Pod) {
 					continue
 				}
 				if podSelector.Matches(podLabels) {
-					c.queue.Add(np)
+					key, err := cache.MetaNamespaceKeyFunc(np)
+					if err != nil {
+						utilruntime.HandleError(fmt.Errorf("couldn't get key for object %+v: %v", np, err))
+						return
+					}
+					c.queue.Add(key)
 				}
 
 			}
@@ -550,7 +570,12 @@ func (c *Controller) queueNetworkPoliciesForPod(pod *v1.Pod) {
 					continue
 				}
 				if podSelector.Matches(podLabels) {
-					c.queue.Add(np)
+					key, err := cache.MetaNamespaceKeyFunc(np)
+					if err != nil {
+						utilruntime.HandleError(fmt.Errorf("couldn't get key for object %+v: %v", np, err))
+						return
+					}
+					c.queue.Add(key)
 				}
 			}
 		}
