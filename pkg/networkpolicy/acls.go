@@ -4,7 +4,7 @@ import "net"
 
 type NetworkPolicer interface {
 	Apply(policy Policy) error
-	Remove(policy Policy) error
+	Remove(name string) error
 }
 
 // Policy is defined by a set of ACLs and a default action

@@ -18,7 +18,7 @@ func (f fakeNetworkPolicer) Apply(policy Policy) error {
 	return nil
 }
 
-func (f fakeNetworkPolicer) Remove(policy Policy) error {
+func (f fakeNetworkPolicer) Remove(name string) error {
 	return nil
 }
 

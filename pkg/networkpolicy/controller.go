@@ -209,8 +209,23 @@ func (c *Controller) syncNetworkPolicy(key string) error {
 	if err != nil && !apierrors.IsNotFound(err) {
 		return err
 	}
+
+	// Delete the network policy, it no longer exists
+	if err != nil {
+		return c.networkPolicer.Remove(key)
+	}
+
+	// Get desired state for the network policy
+	// This assumes that the implementation of the network policier knows
+	// how to handle the differences. Per example, if a network policy is
+	// updated the network policier should handle the transition from
+	// current state to desired state.
 	klog.Infof("Creating networkpolicy %s on namespace %s", name, namespace)
 	klog.Infof("Network Policy %+v", networkpolicy)
+	newPolicy := Policy{
+		Name:          key,
+		DefaultAction: Drop,
+	}
 
 	// This selects particular Pods in the same namespace as the NetworkPolicy which
 	// should be allowed as ingress sources or egress destinations.
@@ -220,8 +235,6 @@ func (c *Controller) syncNetworkPolicy(key string) error {
 	}
 	pods, err := c.podLister.Pods(namespace).List(podSelector)
 	if err != nil {
-		c.eventRecorder.Eventf(networkpolicy, v1.EventTypeWarning, "FailedToListPods",
-			"Error listing Pods for Network Policy %s/%s: %v", namespace, name, err)
 		return err
 	}
 
@@ -237,7 +250,6 @@ func (c *Controller) syncNetworkPolicy(key string) error {
 	// selected pods, or both. If no policyTypes are specified on a NetworkPolicy then
 	// by default Ingress will always be set and Egress will be set if the NetworkPolicy
 	// has any egress rules.
-	// defaultIngress := len(networkpolicy.Spec.Ingress) == 0
 
 	// ingress: Each NetworkPolicy may include a list of allowed ingress rules.
 	// Each rule allows traffic which matches both the from and ports sections.
@@ -330,7 +342,7 @@ func (c *Controller) syncNetworkPolicy(key string) error {
 		}
 
 	}
-	return nil
+	return c.networkPolicer.Apply(newPolicy)
 }
 
 // handlers
