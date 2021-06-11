@@ -89,3 +89,7 @@ func getLbEndpoints(slices []*discovery.EndpointSlice, svcPort v1.ServicePort, f
 	klog.V(4).Infof("LB Endpoints for %s are: %v", slices[0].Labels[discovery.LabelServiceName], lbEndpoints.List())
 	return lbEndpoints.List()
 }
+
+func getNodeIPs() ([]string, error) {
+	return []string{}, nil
+}

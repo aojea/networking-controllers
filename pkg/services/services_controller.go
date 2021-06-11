@@ -42,6 +42,7 @@ const (
 func NewController(client clientset.Interface,
 	serviceInformer coreinformers.ServiceInformer,
 	endpointSliceInformer discoveryinformers.EndpointSliceInformer,
+	loadBalancer LoadBalancer,
 ) *Controller {
 	klog.V(4).Info("Creating event broadcaster")
 	broadcaster := record.NewBroadcaster()
@@ -54,6 +55,7 @@ func NewController(client clientset.Interface,
 	c := &Controller{
 		client:           client,
 		serviceTracker:   st,
+		loadBalancer:     loadBalancer,
 		queue:            workqueue.NewNamedRateLimitingQueue(workqueue.DefaultControllerRateLimiter(), controllerName),
 		workerLoopPeriod: time.Second,
 	}
@@ -91,8 +93,11 @@ type Controller struct {
 	eventBroadcaster record.EventBroadcaster
 	eventRecorder    record.EventRecorder
 
-	// serviceTrack tracks services and map them to OVN LoadBalancers
+	// serviceTrack tracks services and map them to real LoadBalancers
 	serviceTracker *serviceTracker
+
+	// loadBalancer is the interface that implements the data-plane loadbalancer
+	loadBalancer LoadBalancer
 
 	// serviceLister is able to list/get services and is populated by the shared informer passed to
 	serviceLister corelisters.ServiceLister
@@ -219,9 +224,20 @@ func (c *Controller) syncServices(key string) error {
 	// - the Service was deleted from the cache (doesn't exist in Kubernetes anymore)
 	// - the Service mutated to a new service Type that we don't handle (ExternalName, Headless)
 	if err != nil || !isIPService(service) {
-
-		// DATAPLANE DELETE LOGIC HERE
-
+		// delete all the VIPs from the dataplane
+		for vipKey := range vipsTracked {
+			vip, proto := splitVirtualIPKey(vipKey)
+			err := c.loadBalancer.Remove(LB{
+				Frontend: VirtualIP{
+					vip:      vip,
+					protocol: proto,
+				},
+			})
+			if err != nil {
+				return err
+			}
+			c.serviceTracker.deleteServiceVIP(name, namespace, vip, proto)
+		}
 		// Delete the Service form the Service Tracker
 		c.serviceTracker.deleteService(name, namespace)
 		return nil
@@ -253,10 +269,17 @@ func (c *Controller) syncServices(key string) error {
 			klog.V(4).Infof("Updating service %s/%s with VIP %s %s", name, namespace, vip, svcPort.Protocol)
 			// get the endpoints associated to the vip
 			eps := getLbEndpoints(endpointSlices, svcPort, family)
-
-			// DATAPLANE LOGIC HERE
 			klog.Infof("ClusterIP %s has endpoints: %v", ip, eps)
-
+			err := c.loadBalancer.Apply(LB{
+				Frontend: VirtualIP{
+					vip:      vip,
+					protocol: svcPort.Protocol,
+				},
+				Backend: eps,
+			})
+			if err != nil {
+				return err
+			}
 			// update the tracker with the VIP
 			c.serviceTracker.updateService(name, namespace, vip, svcPort.Protocol)
 			// mark the vip as processed
@@ -264,9 +287,27 @@ func (c *Controller) syncServices(key string) error {
 
 			// Node Port
 			if svcPort.NodePort != 0 {
-
-				// DATAPLANE LOGIC HERE
-
+				nodeIPs, err := getNodeIPs()
+				if err != nil {
+					return err
+				}
+				for _, nodeIP := range nodeIPs {
+					vip := net.JoinHostPort(nodeIP, strconv.Itoa(int(svcPort.NodePort)))
+					err := c.loadBalancer.Apply(LB{
+						Frontend: VirtualIP{
+							vip:      vip,
+							protocol: svcPort.Protocol,
+						},
+						Backend: eps,
+					})
+					if err != nil {
+						return err
+					}
+					// update the tracker with the VIP
+					c.serviceTracker.updateService(name, namespace, vip, svcPort.Protocol)
+					// mark the vip as processed
+					vipsTracked.Delete(virtualIPKey(vip, svcPort.Protocol))
+				}
 			}
 
 			// Services ExternalIPs and LoadBalancer.IngressIPs use to have the same behavior
@@ -289,9 +330,18 @@ func (c *Controller) syncServices(key string) error {
 
 			// reconcile external IPs
 			if len(externalIPs) > 0 {
-
 				for _, extIP := range externalIPs {
 					vip := net.JoinHostPort(extIP, strconv.Itoa(int(svcPort.Port)))
+					err := c.loadBalancer.Apply(LB{
+						Frontend: VirtualIP{
+							vip:      vip,
+							protocol: svcPort.Protocol,
+						},
+						Backend: eps,
+					})
+					if err != nil {
+						return err
+					}
 					c.serviceTracker.updateService(name, namespace, vip, svcPort.Protocol)
 					// mark the vip as processed
 					vipsTracked.Delete(virtualIPKey(vip, svcPort.Protocol))
@@ -302,10 +352,19 @@ func (c *Controller) syncServices(key string) error {
 
 	// at this point we have processed all vips we've found in the service
 	// so the remaining ones that we had in the vipsTracked variable should be deleted
-	// We remove them from OVN and from the tracker
-
-	// DELETE VIP LOGIC HERE
-
+	for vipKey := range vipsTracked {
+		vip, proto := splitVirtualIPKey(vipKey)
+		err := c.loadBalancer.Remove(LB{
+			Frontend: VirtualIP{
+				vip:      vip,
+				protocol: proto,
+			},
+		})
+		if err != nil {
+			return err
+		}
+		c.serviceTracker.deleteServiceVIP(name, namespace, vip, proto)
+	}
 	c.serviceTracker.deleteServiceVIPs(name, namespace, vipsTracked)
 	return nil
 }

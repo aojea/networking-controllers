@@ -2,6 +2,7 @@ package main
 
 import (
 	"flag"
+	"fmt"
 
 	"github.com/aojea/networking-controllers/pkg/services"
 
@@ -14,6 +15,18 @@ import (
 	"k8s.io/client-go/tools/clientcmd"
 	"k8s.io/klog/v2"
 )
+
+type FakeLoadBalancer struct{}
+
+func (f FakeLoadBalancer) Apply(lb services.LB) error {
+	fmt.Printf("Apply LB %+v\n", lb)
+	return nil
+}
+
+func (f FakeLoadBalancer) Remove(lb services.LB) error {
+	fmt.Printf("Remove LB %+v\n", lb)
+	return nil
+}
 
 func main() {
 	var kubeconfig string
@@ -56,6 +69,7 @@ func main() {
 		clientset,
 		informersFactory.Core().V1().Services(),
 		informersFactory.Discovery().V1().EndpointSlices(),
+		FakeLoadBalancer{},
 	)
 
 	stop := make(chan struct{})

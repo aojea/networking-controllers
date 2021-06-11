@@ -1,6 +1,7 @@
 package services
 
 import (
+	"fmt"
 	"testing"
 
 	v1 "k8s.io/api/core/v1"
@@ -15,6 +16,18 @@ import (
 
 var alwaysReady = func() bool { return true }
 
+type FakeLoadBalancer struct{}
+
+func (f FakeLoadBalancer) Apply(lb LB) error {
+	fmt.Printf("Apply LB %+v\n", lb)
+	return nil
+}
+
+func (f FakeLoadBalancer) Remove(lb LB) error {
+	fmt.Printf("Remove LB %+v\n", lb)
+	return nil
+}
+
 type serviceController struct {
 	*Controller
 	serviceStore       cache.Store
@@ -27,6 +40,7 @@ func newController() *serviceController {
 	controller := NewController(client,
 		informerFactory.Core().V1().Services(),
 		informerFactory.Discovery().V1().EndpointSlices(),
+		FakeLoadBalancer{},
 	)
 	controller.servicesSynced = alwaysReady
 	controller.endpointSlicesSynced = alwaysReady
