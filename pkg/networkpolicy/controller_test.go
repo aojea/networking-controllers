@@ -1,10 +1,13 @@
 package networkpolicy
 
 import (
+	"fmt"
+	"reflect"
 	"testing"
 
 	v1 "k8s.io/api/core/v1"
 	networkingv1 "k8s.io/api/networking/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/informers"
 	"k8s.io/client-go/kubernetes/fake"
 	"k8s.io/client-go/tools/cache"
@@ -12,9 +15,14 @@ import (
 
 var alwaysReady = func() bool { return true }
 
-type fakeNetworkPolicer struct{}
+type fakeNetworkPolicer struct {
+	Policy Policy
+}
 
 func (f fakeNetworkPolicer) Apply(policy Policy) error {
+	if !reflect.DeepEqual(policy, f.Policy) {
+		return fmt.Errorf("policies doesn't match %+v %+v", policy, f.Policy)
+	}
 	return nil
 }
 
@@ -53,11 +61,30 @@ func TestSyncNetworkPolicy(t *testing.T) {
 	npName := "test"
 	ns := "test-ns"
 	tests := []struct {
-		name          string
-		networkpolicy *networkingv1.NetworkPolicy
-		namespace     *v1.Namespace
-		pod           *v1.Pod
-	}{}
+		name           string
+		networkpolicy  *networkingv1.NetworkPolicy
+		namespace      *v1.Namespace
+		pod            *v1.Pod
+		expectedPolicy *Policy
+	}{
+		{
+			name: "Default deny all traffic",
+			networkpolicy: &networkingv1.NetworkPolicy{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: "default-deny-all",
+				},
+				Spec: networkingv1.NetworkPolicySpec{
+					PodSelector: metav1.LabelSelector{},
+					PolicyTypes: []networkingv1.PolicyType{networkingv1.PolicyTypeEgress, networkingv1.PolicyTypeIngress},
+					Ingress:     []networkingv1.NetworkPolicyIngressRule{},
+					Egress:      []networkingv1.NetworkPolicyEgressRule{},
+				},
+			},
+			namespace:      &v1.Namespace{},
+			pod:            &v1.Pod{},
+			expectedPolicy: &Policy{},
+		},
+	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
