@@ -168,7 +168,7 @@ func (c *Controller) handleErr(err error, key interface{}) {
 		klog.ErrorS(err, "Failed to split meta namespace cache key", "key", key)
 	}
 
-	// MetricRequeueServiceCount.WithLabelValues(key.(string)).Inc()
+	// MetricRequeueNetworkPolicyCount.WithLabelValues(key.(string)).Inc()
 
 	if c.queue.NumRequeues(key) < maxRetries {
 		klog.V(2).InfoS("Error syncing networkpolicy, retrying", "networkpolicy", klog.KRef(ns, name), "err", err)
@@ -188,14 +188,14 @@ func (c *Controller) syncNetworkPolicy(key string) error {
 		return err
 	}
 	klog.Infof("Processing sync for network policy %s on namespace %s ", name, namespace)
-	// MetricSyncServiceCount.WithLabelValues(key).Inc()
+	// MetricSyncNetworkPolicyCount.WithLabelValues(key).Inc()
 
 	defer func() {
 		klog.V(4).Infof("Finished syncing network policy %s on namespace %s : %v", name, namespace, time.Since(startTime))
-		// MetricSyncServiceLatency.WithLabelValues(key).Observe(time.Since(startTime).Seconds())
+		// MetricSyncNetworkPolicyLatency.WithLabelValues(key).Observe(time.Since(startTime).Seconds())
 	}()
 
-	// Get current Service from the cache
+	// Get current NetworkPolicy from the cache
 	networkpolicy, err := c.networkpolicyLister.NetworkPolicies(namespace).Get(name)
 	// It´s unlikely that we have an error different that "Not Found Object"
 	// because we are getting the object from the informer´s cache
@@ -222,6 +222,7 @@ func (c *Controller) syncNetworkPolicy(key string) error {
 	for _, pod := range pods {
 		policyIPs = append(policyIPs, getPodIPs(pod.Status)...)
 	}
+	klog.Infof("Network Policy %s/%s select pod IPs: %v", networkpolicy.Namespace, networkpolicy.Name, policyIPs)
 
 	// policyTypes: Each NetworkPolicy includes a policyTypes list which may include
 	// either Ingress, Egress, or both. The policyTypes field indicates whether or not
@@ -229,7 +230,7 @@ func (c *Controller) syncNetworkPolicy(key string) error {
 	// selected pods, or both. If no policyTypes are specified on a NetworkPolicy then
 	// by default Ingress will always be set and Egress will be set if the NetworkPolicy
 	// has any egress rules.
-	defaultIngress := len(networkpolicy.Spec.Ingress) == 0
+	// defaultIngress := len(networkpolicy.Spec.Ingress) == 0
 
 	// ingress: Each NetworkPolicy may include a list of allowed ingress rules.
 	// Each rule allows traffic which matches both the from and ports sections.
@@ -255,20 +256,26 @@ func (c *Controller) syncNetworkPolicy(key string) error {
 				return err
 			}
 
+			ingressIPs := []string{}
 			for _, ns := range namespaces {
 				pods, err := c.podLister.Pods(ns.String()).List(podSelector)
 				if err != nil {
 					return err
 				}
+				for _, pod := range pods {
+					ingressIPs = append(ingressIPs, getPodIPs(pod.Status)...)
+				}
 			}
+			klog.Infof("Network Policy %s/%s Ingress pod IPs: %v", networkpolicy.Namespace, networkpolicy.Name, ingressIPs)
+
 			// This selects particular IP CIDR ranges to allow as ingress sources or egress destinations
 			if from.IPBlock != nil {
-
+				klog.Infof("Network Policy %s/%s Ingress IPBlock: %v", networkpolicy.Namespace, networkpolicy.Name, from.IPBlock)
 			}
 		}
 
 		for _, port := range ingress.Ports {
-
+			klog.Infof("Network Policy %s/%s Ingress ports: %v", networkpolicy.Namespace, networkpolicy.Name, port.String())
 		}
 
 	}
@@ -293,20 +300,26 @@ func (c *Controller) syncNetworkPolicy(key string) error {
 				return err
 			}
 
+			egressIPs := []string{}
 			for _, ns := range namespaces {
 				pods, err := c.podLister.Pods(ns.String()).List(podSelector)
 				if err != nil {
 					return err
 				}
+				for _, pod := range pods {
+					egressIPs = append(egressIPs, getPodIPs(pod.Status)...)
+				}
 			}
+			klog.Infof("Network Policy %s/%s Egress pod IPs: %v", networkpolicy.Namespace, networkpolicy.Name, egressIPs)
+
 			// This selects particular IP CIDR ranges to allow as ingress sources or egress destinations
 			if to.IPBlock != nil {
-
+				klog.Infof("Network Policy %s/%s Egress IPBlock: %v", networkpolicy.Namespace, networkpolicy.Name, to.IPBlock)
 			}
 		}
 
 		for _, port := range egress.Ports {
-
+			klog.Infof("Network Policy %s/%s Egress ports: %v", networkpolicy.Namespace, networkpolicy.Name, port.String())
 		}
 
 	}
@@ -315,7 +328,7 @@ func (c *Controller) syncNetworkPolicy(key string) error {
 
 // handlers
 
-// onNetworkPolicyUpdate queues the Service for processing.
+// onNetworkPolicyUpdate queues the NetworkPolicy for processing.
 func (c *Controller) onNetworkPolicyAdd(obj interface{}) {
 	key, err := cache.MetaNamespaceKeyFunc(obj)
 	if err != nil {
@@ -326,14 +339,14 @@ func (c *Controller) onNetworkPolicyAdd(obj interface{}) {
 	c.queue.Add(key)
 }
 
-// onNetworkPolicyUpdate updates the Service Selector in the cache and queues the Service for processing.
+// onNetworkPolicyUpdate updates the NetworkPolicy Selector in the cache and queues the NetworkPolicy for processing.
 func (c *Controller) onNetworkPolicyUpdate(oldObj, newObj interface{}) {
-	oldService := oldObj.(*networkingv1.NetworkPolicy)
-	newService := newObj.(*networkingv1.NetworkPolicy)
+	oldNetworkPolicy := oldObj.(*networkingv1.NetworkPolicy)
+	newNetworkPolicy := newObj.(*networkingv1.NetworkPolicy)
 
 	// don't process resync or objects that are marked for deletion
-	if oldService.ResourceVersion == newService.ResourceVersion ||
-		!newService.GetDeletionTimestamp().IsZero() {
+	if oldNetworkPolicy.ResourceVersion == newNetworkPolicy.ResourceVersion ||
+		!newNetworkPolicy.GetDeletionTimestamp().IsZero() {
 		return
 	}
 
@@ -343,7 +356,7 @@ func (c *Controller) onNetworkPolicyUpdate(oldObj, newObj interface{}) {
 	}
 }
 
-// onNetworkPolicyDelete queues the Service for processing.
+// onNetworkPolicyDelete queues the NetworkPolicy for processing.
 func (c *Controller) onNetworkPolicyDelete(obj interface{}) {
 	key, err := cache.MetaNamespaceKeyFunc(obj)
 	if err != nil {
@@ -354,7 +367,7 @@ func (c *Controller) onNetworkPolicyDelete(obj interface{}) {
 	c.queue.Add(key)
 }
 
-// onNamespaceAdd queues a sync for the relevant Service for a sync
+// onNamespaceAdd queues a sync for the relevant NetworkPolicy for a sync
 func (c *Controller) onNamespaceAdd(obj interface{}) {
 	namespace := obj.(*v1.Namespace)
 	if namespace == nil {
@@ -364,7 +377,7 @@ func (c *Controller) onNamespaceAdd(obj interface{}) {
 	c.queueNetworkPoliciesForNamespace(namespace)
 }
 
-// onNamespaceUpdate queues a sync for the relevant Service for a sync
+// onNamespaceUpdate queues a sync for the relevant NetworkPolicy for a sync
 func (c *Controller) onNamespaceUpdate(prevObj, obj interface{}) {
 	prevNamespace := prevObj.(*v1.Namespace)
 	namespace := obj.(*v1.Namespace)
@@ -377,7 +390,7 @@ func (c *Controller) onNamespaceUpdate(prevObj, obj interface{}) {
 	c.queueNetworkPoliciesForNamespace(namespace)
 }
 
-// onNamespaceDelete queues a sync for the relevant Service for a sync if the
+// onNamespaceDelete queues a sync for the relevant NetworkPolicy for a sync if the
 // EndpointSlice resource version does not match the expected version in the
 // namespaceTracker.
 func (c *Controller) onNamespaceDelete(obj interface{}) {
@@ -434,7 +447,7 @@ func (c *Controller) queueNetworkPoliciesForNamespace(namespace *v1.Namespace) {
 	}
 }
 
-// onPodAdd queues a sync for the relevant Service for a sync
+// onPodAdd queues a sync for the relevant NetworkPolicy for a sync
 func (c *Controller) onPodAdd(obj interface{}) {
 	pod := obj.(*v1.Pod)
 	if pod == nil {
@@ -444,7 +457,7 @@ func (c *Controller) onPodAdd(obj interface{}) {
 	c.queueNetworkPoliciesForPod(pod)
 }
 
-// onPodUpdate queues a sync for the relevant Service for a sync
+// onPodUpdate queues a sync for the relevant NetworkPolicy for a sync
 func (c *Controller) onPodUpdate(prevObj, obj interface{}) {
 	prevPod := prevObj.(*v1.Pod)
 	pod := obj.(*v1.Pod)
@@ -457,7 +470,7 @@ func (c *Controller) onPodUpdate(prevObj, obj interface{}) {
 	c.queueNetworkPoliciesForPod(pod)
 }
 
-// onPodDelete queues a sync for the relevant Service for a sync if the
+// onPodDelete queues a sync for the relevant NetworkPolicy for a sync if the
 // EndpointSlice resource version does not match the expected version in the
 // namespaceTracker.
 func (c *Controller) onPodDelete(obj interface{}) {
@@ -480,7 +493,7 @@ func (c *Controller) onPodDelete(obj interface{}) {
 	}
 }
 
-// queueServiceForEndpointSlice attempts to queue the corresponding Service for
+// queueNetworkPolicyForEndpointSlice attempts to queue the corresponding NetworkPolicy for
 // the provided EndpointSlice.
 func (c *Controller) queueNetworkPoliciesForPod(pod *v1.Pod) {
 	podLabels := labels.Set(pod.GetLabels())
@@ -503,7 +516,7 @@ func (c *Controller) queueNetworkPoliciesForPod(pod *v1.Pod) {
 				c.queue.Add(np)
 			}
 		}
-		// enqueue all the network policies that affect the namespace
+		// enqueue all the network policies that affect the pod
 		for _, ingress := range np.Spec.Ingress {
 			for _, from := range ingress.From {
 				nsSelector, err := metav1.LabelSelectorAsSelector(from.NamespaceSelector)
