@@ -61,7 +61,7 @@ func NewController(client clientset.Interface,
 		DeleteFunc: c.onNetworkPolicyDelete,
 	})
 	c.networkpolicyLister = networkpolicyInformer.Lister()
-	c.networkpolicysSynced = networkpolicyInformer.Informer().HasSynced
+	c.networkpoliciesSynced = networkpolicyInformer.Informer().HasSynced
 
 	// namespaces
 	klog.Info("Setting up event handlers for namespaces")
@@ -97,12 +97,12 @@ type Controller struct {
 	eventBroadcaster record.EventBroadcaster
 	eventRecorder    record.EventRecorder
 
-	networkpolicyLister  networkinglisters.NetworkPolicyLister
-	networkpolicysSynced cache.InformerSynced
-	namespaceLister      corelisters.NamespaceLister
-	namespacesSynced     cache.InformerSynced
-	podLister            corelisters.PodLister
-	podsSynced           cache.InformerSynced
+	networkpolicyLister   networkinglisters.NetworkPolicyLister
+	networkpoliciesSynced cache.InformerSynced
+	namespaceLister       corelisters.NamespaceLister
+	namespacesSynced      cache.InformerSynced
+	podLister             corelisters.PodLister
+	podsSynced            cache.InformerSynced
 
 	queue workqueue.RateLimitingInterface
 
@@ -121,7 +121,7 @@ func (c *Controller) Run(workers int, stopCh <-chan struct{}) error {
 
 	// Wait for the caches to be synced
 	klog.Info("Waiting for informer caches to sync")
-	if !cache.WaitForNamedCacheSync(controllerName, stopCh, c.networkpolicysSynced, c.namespacesSynced, c.podsSynced) {
+	if !cache.WaitForNamedCacheSync(controllerName, stopCh, c.networkpoliciesSynced, c.namespacesSynced, c.podsSynced) {
 		return fmt.Errorf("error syncing cache")
 	}
 
