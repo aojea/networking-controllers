@@ -12,6 +12,16 @@ import (
 
 var alwaysReady = func() bool { return true }
 
+type fakeNetworkPolicer struct{}
+
+func (f fakeNetworkPolicer) Apply(policy Policy) error {
+	return nil
+}
+
+func (f fakeNetworkPolicer) Remove(policy Policy) error {
+	return nil
+}
+
 type networkpolicyController struct {
 	*Controller
 	networkpolicyStore cache.Store
@@ -26,6 +36,7 @@ func newController() *networkpolicyController {
 		informersFactory.Networking().V1().NetworkPolicies(),
 		informersFactory.Core().V1().Namespaces(),
 		informersFactory.Core().V1().Pods(),
+		fakeNetworkPolicer{},
 	)
 	controller.networkpoliciesSynced = alwaysReady
 	controller.namespacesSynced = alwaysReady

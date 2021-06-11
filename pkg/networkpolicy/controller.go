@@ -40,6 +40,7 @@ func NewController(client clientset.Interface,
 	networkpolicyInformer networkinginformers.NetworkPolicyInformer,
 	namespaceInformer coreinformers.NamespaceInformer,
 	podInformer coreinformers.PodInformer,
+	networkPolicer NetworkPolicer,
 ) *Controller {
 	klog.V(4).Info("Creating event broadcaster")
 	broadcaster := record.NewBroadcaster()
@@ -49,6 +50,7 @@ func NewController(client clientset.Interface,
 
 	c := &Controller{
 		client:           client,
+		networkPolicer:   networkPolicer,
 		queue:            workqueue.NewNamedRateLimitingQueue(workqueue.DefaultControllerRateLimiter(), controllerName),
 		workerLoopPeriod: time.Second,
 	}
@@ -97,6 +99,7 @@ type Controller struct {
 	eventBroadcaster record.EventBroadcaster
 	eventRecorder    record.EventRecorder
 
+	// informers for network policies, namespaces and pods
 	networkpolicyLister   networkinglisters.NetworkPolicyLister
 	networkpoliciesSynced cache.InformerSynced
 	namespaceLister       corelisters.NamespaceLister
@@ -104,6 +107,10 @@ type Controller struct {
 	podLister             corelisters.PodLister
 	podsSynced            cache.InformerSynced
 
+	// interface to apply network policies to the data plane
+	networkPolicer NetworkPolicer
+
+	// rate limited queue
 	queue workqueue.RateLimitingInterface
 
 	// workerLoopPeriod is the time between worker runs. The workers process the queue of networkpolicy and pod changes.
