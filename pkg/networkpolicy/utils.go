@@ -6,17 +6,19 @@ import (
 	v1 "k8s.io/api/core/v1"
 )
 
-func getPodIPs(podStatus v1.PodStatus) []string {
+func getPodIPNets(podStatus v1.PodStatus) []string {
 	addresses := []string{}
 
 	for _, podIP := range podStatus.PodIPs {
-		addresses = append(addresses, podIP.String())
+		ipNet := ipToIPNet(podIP.String())
+		addresses = append(addresses, ipNet.String())
 	}
 
 	return addresses
 }
 
-func IPtoIPNet(ip net.IP) *net.IPNet {
+func ipToIPNet(address string) *net.IPNet {
+	ip := net.ParseIP(address)
 	maskLen := 128
 	if ip.To4() != nil {
 		maskLen = 32

@@ -1,6 +1,6 @@
 package networkpolicy
 
-import "net"
+import v1 "k8s.io/api/core/v1"
 
 type NetworkPolicer interface {
 	Apply(policy Policy) error
@@ -17,26 +17,22 @@ type Policy struct {
 
 // ACL defines an access list action
 type ACL struct {
-	source          net.IPNet
-	sourcePort      int32
-	destination     net.IPNet
-	destinationPort int32
-	protocol        Protocol
+	source          []string
+	sourcePort      []int
+	destination     []string
+	destinationPort []ACLPort
 	action          Action
 }
 
-type Action int
+type Action string
 
 const (
-	Drop Action = iota + 1
-	Pass
-	Filter
+	DropAction   Action = "drop"
+	PassAction   Action = "pass"
+	FilterAction Action = "filter"
 )
 
-type Protocol string
-
-const (
-	TCPProtocol  Protocol = "tcp"
-	UDProtocol   Protocol = "udp"
-	SCTPProtocol Protocol = "sctp"
-)
+type ACLPort struct {
+	port     string
+	protocol v1.Protocol
+}

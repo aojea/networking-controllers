@@ -222,10 +222,6 @@ func (c *Controller) syncNetworkPolicy(key string) error {
 	// current state to desired state.
 	klog.Infof("Creating networkpolicy %s on namespace %s", name, namespace)
 	klog.Infof("Network Policy %+v", networkpolicy)
-	newPolicy := Policy{
-		Name:          key,
-		DefaultAction: Drop,
-	}
 
 	// This selects particular Pods in the same namespace as the NetworkPolicy which
 	// should be allowed as ingress sources or egress destinations.
@@ -238,11 +234,11 @@ func (c *Controller) syncNetworkPolicy(key string) error {
 		return err
 	}
 
-	policyIPs := []string{}
+	targetIPs := []string{}
 	for _, pod := range pods {
-		policyIPs = append(policyIPs, getPodIPs(pod.Status)...)
+		targetIPs = append(targetIPs, getPodIPNets(pod.Status)...)
 	}
-	klog.Infof("Network Policy %s/%s select pod IPs: %v", networkpolicy.Namespace, networkpolicy.Name, policyIPs)
+	klog.Infof("Network Policy %s/%s select pod IPs: %v", networkpolicy.Namespace, networkpolicy.Name, targetIPs)
 
 	// policyTypes: Each NetworkPolicy includes a policyTypes list which may include
 	// either Ingress, Egress, or both. The policyTypes field indicates whether or not
@@ -250,97 +246,192 @@ func (c *Controller) syncNetworkPolicy(key string) error {
 	// selected pods, or both. If no policyTypes are specified on a NetworkPolicy then
 	// by default Ingress will always be set and Egress will be set if the NetworkPolicy
 	// has any egress rules.
-
-	// ingress: Each NetworkPolicy may include a list of allowed ingress rules.
-	// Each rule allows traffic which matches both the from and ports sections.
-	// The example policy contains a single rule, which matches traffic on a single port,
-	// from one of three sources, the first specified via an ipBlock,
-	// the second via a namespaceSelector and the third via a podSelector.
-
-	for _, ingress := range networkpolicy.Spec.Ingress {
-		for _, from := range ingress.From {
-
-			nsSelector, err := metav1.LabelSelectorAsSelector(from.NamespaceSelector)
-			if err != nil {
-				return err
-			}
-
-			namespaces, err := c.namespaceLister.List(nsSelector)
-			if err != nil {
-				return err
-			}
-
-			podSelector, err := metav1.LabelSelectorAsSelector(&networkpolicy.Spec.PodSelector)
-			if err != nil {
-				return err
-			}
-
-			ingressIPs := []string{}
-			for _, ns := range namespaces {
-				pods, err := c.podLister.Pods(ns.String()).List(podSelector)
-				if err != nil {
-					return err
-				}
-				for _, pod := range pods {
-					ingressIPs = append(ingressIPs, getPodIPs(pod.Status)...)
-				}
-			}
-			klog.Infof("Network Policy %s/%s Ingress pod IPs: %v", networkpolicy.Namespace, networkpolicy.Name, ingressIPs)
-
-			// This selects particular IP CIDR ranges to allow as ingress sources or egress destinations
-			if from.IPBlock != nil {
-				klog.Infof("Network Policy %s/%s Ingress IPBlock: %v", networkpolicy.Namespace, networkpolicy.Name, from.IPBlock)
-			}
-		}
-
-		for _, port := range ingress.Ports {
-			klog.Infof("Network Policy %s/%s Ingress ports: %v", networkpolicy.Namespace, networkpolicy.Name, port.String())
-		}
-
+	newPolicy := Policy{
+		Name:          key,
+		DefaultAction: DropAction,
 	}
-	// egress: Each NetworkPolicy may include a list of allowed egress rules.
-	// Each rule allows traffic which matches both the to and ports sections.
-	// The example policy contains a single rule, which matches traffic on a
-	// single port to any destination in 10.0.0.0/24.
-	for _, egress := range networkpolicy.Spec.Egress {
-		for _, to := range egress.To {
-			nsSelector, err := metav1.LabelSelectorAsSelector(to.NamespaceSelector)
-			if err != nil {
-				return err
+	allowedIPs := []string{}
+	notAllowedIPs := []string{}
+
+	for _, policyType := range networkpolicy.Spec.PolicyTypes {
+		// ingress: Each NetworkPolicy may include a list of allowed ingress rules.
+		// Each rule allows traffic which matches both the from and ports sections.
+		// The example policy contains a single rule, which matches traffic on a single port,
+		// from one of three sources, the first specified via an ipBlock,
+		// the second via a namespaceSelector and the third via a podSelector.
+		if policyType == networkingv1.PolicyTypeIngress {
+			// Default deny all ingress traffic
+			if networkpolicy.Spec.Ingress == nil {
+				newPolicy.AccessList = append(newPolicy.AccessList, ACL{
+					source:      []string{"0.0.0.0/0"},
+					destination: targetIPs,
+					action:      DropAction,
+				})
+				continue
+			}
+			// Default allow all ingress traffic
+			if len(networkpolicy.Spec.Ingress) == 0 {
+				newPolicy.AccessList = append(newPolicy.AccessList, ACL{
+					source:      []string{"0.0.0.0/0"},
+					destination: targetIPs,
+					action:      PassAction,
+				})
+				continue
 			}
 
-			namespaces, err := c.namespaceLister.List(nsSelector)
-			if err != nil {
-				return err
-			}
+			for _, ingress := range networkpolicy.Spec.Ingress {
 
-			podSelector, err := metav1.LabelSelectorAsSelector(&networkpolicy.Spec.PodSelector)
-			if err != nil {
-				return err
-			}
+				for _, from := range ingress.From {
+					nsSelector, err := metav1.LabelSelectorAsSelector(from.NamespaceSelector)
+					if err != nil {
+						return err
+					}
 
-			egressIPs := []string{}
-			for _, ns := range namespaces {
-				pods, err := c.podLister.Pods(ns.String()).List(podSelector)
-				if err != nil {
-					return err
+					namespaces, err := c.namespaceLister.List(nsSelector)
+					if err != nil {
+						return err
+					}
+
+					podSelector, err := metav1.LabelSelectorAsSelector(&networkpolicy.Spec.PodSelector)
+					if err != nil {
+						return err
+					}
+
+					allowedIPs = []string{}
+					notAllowedIPs = []string{}
+					for _, ns := range namespaces {
+						pods, err := c.podLister.Pods(ns.String()).List(podSelector)
+						if err != nil {
+							return err
+						}
+						for _, pod := range pods {
+							allowedIPs = append(allowedIPs, getPodIPNets(pod.Status)...)
+						}
+					}
+					klog.Infof("Network Policy %s/%s Ingress pod IPs: %v", networkpolicy.Namespace, networkpolicy.Name, allowedIPs)
+
+					// This selects particular IP CIDR ranges to allow as ingress sources or egress destinations
+					if from.IPBlock != nil {
+						klog.Infof("Network Policy %s/%s Ingress IPBlock: %v", networkpolicy.Namespace, networkpolicy.Name, from.IPBlock)
+						allowedIPs = append(allowedIPs, from.IPBlock.CIDR)
+						notAllowedIPs = from.IPBlock.Except
+					}
 				}
-				for _, pod := range pods {
-					egressIPs = append(egressIPs, getPodIPs(pod.Status)...)
-				}
-			}
-			klog.Infof("Network Policy %s/%s Egress pod IPs: %v", networkpolicy.Namespace, networkpolicy.Name, egressIPs)
 
-			// This selects particular IP CIDR ranges to allow as ingress sources or egress destinations
-			if to.IPBlock != nil {
-				klog.Infof("Network Policy %s/%s Egress IPBlock: %v", networkpolicy.Namespace, networkpolicy.Name, to.IPBlock)
+				ports := []ACLPort{}
+				for _, port := range ingress.Ports {
+					klog.Infof("Network Policy %s/%s Ingress ports: %v", networkpolicy.Namespace, networkpolicy.Name, port.String())
+					ports = append(ports, ACLPort{
+						port.Port.String(),
+						*port.Protocol,
+					})
+				}
+				// Create ACLs entries
+				newPolicy.AccessList = append(newPolicy.AccessList, ACL{
+					source:          allowedIPs,
+					destination:     targetIPs,
+					destinationPort: ports,
+					action:          PassAction,
+				})
+				if len(notAllowedIPs) > 0 {
+					newPolicy.AccessList = append(newPolicy.AccessList, ACL{
+						source:          notAllowedIPs,
+						destination:     targetIPs,
+						destinationPort: ports,
+						action:          DropAction,
+					})
+				}
+
 			}
 		}
+		// egress: Each NetworkPolicy may include a list of allowed egress rules.
+		// Each rule allows traffic which matches both the to and ports sections.
+		// The example policy contains a single rule, which matches traffic on a
+		// single port to any destination in 10.0.0.0/24.
+		if policyType == networkingv1.PolicyTypeEgress {
+			// Default deny all egress traffic
+			if networkpolicy.Spec.Egress == nil {
+				newPolicy.AccessList = append(newPolicy.AccessList, ACL{
+					source:      targetIPs,
+					destination: []string{"0.0.0.0/0"},
+					action:      DropAction,
+				})
+				continue
+			}
+			// Default allow all egress traffic
+			if len(networkpolicy.Spec.Egress) == 0 {
+				newPolicy.AccessList = append(newPolicy.AccessList, ACL{
+					source:      targetIPs,
+					destination: []string{"0.0.0.0/0"},
+					action:      PassAction,
+				})
+				continue
+			}
 
-		for _, port := range egress.Ports {
-			klog.Infof("Network Policy %s/%s Egress ports: %v", networkpolicy.Namespace, networkpolicy.Name, port.String())
+			for _, egress := range networkpolicy.Spec.Egress {
+				for _, to := range egress.To {
+					nsSelector, err := metav1.LabelSelectorAsSelector(to.NamespaceSelector)
+					if err != nil {
+						return err
+					}
+
+					namespaces, err := c.namespaceLister.List(nsSelector)
+					if err != nil {
+						return err
+					}
+
+					podSelector, err := metav1.LabelSelectorAsSelector(&networkpolicy.Spec.PodSelector)
+					if err != nil {
+						return err
+					}
+
+					allowedIPs = []string{}
+					notAllowedIPs = []string{}
+					for _, ns := range namespaces {
+						pods, err := c.podLister.Pods(ns.String()).List(podSelector)
+						if err != nil {
+							return err
+						}
+						for _, pod := range pods {
+							allowedIPs = append(allowedIPs, getPodIPNets(pod.Status)...)
+						}
+					}
+					klog.Infof("Network Policy %s/%s Egress pod IPs: %v", networkpolicy.Namespace, networkpolicy.Name, allowedIPs)
+
+					// This selects particular IP CIDR ranges to allow as ingress sources or egress destinations
+					if to.IPBlock != nil {
+						klog.Infof("Network Policy %s/%s Egress IPBlock: %v", networkpolicy.Namespace, networkpolicy.Name, to.IPBlock)
+						allowedIPs = append(allowedIPs, to.IPBlock.CIDR)
+						notAllowedIPs = to.IPBlock.Except
+					}
+				}
+
+				ports := []ACLPort{}
+				for _, port := range egress.Ports {
+					klog.Infof("Network Policy %s/%s Egress ports: %v", networkpolicy.Namespace, networkpolicy.Name, port.String())
+					ports = append(ports, ACLPort{
+						port.Port.String(),
+						*port.Protocol,
+					})
+				}
+				// Create ACLs entries
+				newPolicy.AccessList = append(newPolicy.AccessList, ACL{
+					source:          targetIPs,
+					destination:     allowedIPs,
+					destinationPort: ports,
+					action:          PassAction,
+				})
+				if len(notAllowedIPs) > 0 {
+					newPolicy.AccessList = append(newPolicy.AccessList, ACL{
+						source:          targetIPs,
+						destination:     notAllowedIPs,
+						destinationPort: ports,
+						action:          DropAction,
+					})
+				}
+
+			}
 		}
-
 	}
 	return c.networkPolicer.Apply(newPolicy)
 }
