@@ -12,15 +12,10 @@ import (
 	"k8s.io/klog/v2"
 )
 
-type fakeNetworkPolicer struct{}
+type fakeReconciler struct{}
 
-func (f fakeNetworkPolicer) Apply(policy networkpolicy.Policy) error {
-	fmt.Printf("Apply Network Policy %+v\n", policy)
-	return nil
-}
-
-func (f fakeNetworkPolicer) Remove(name string) error {
-	fmt.Printf("Remove Network Policy %s\n", name)
+func (f fakeReconciler) Reconcile(name string, policy networkpolicy.Policy) error {
+	fmt.Printf("Apply Network Policy %s %+v\n", name, policy)
 	return nil
 }
 
@@ -51,7 +46,7 @@ func main() {
 		informersFactory.Networking().V1().NetworkPolicies(),
 		informersFactory.Core().V1().Namespaces(),
 		informersFactory.Core().V1().Pods(),
-		fakeNetworkPolicer{},
+		fakeReconciler{},
 	)
 
 	stop := make(chan struct{})

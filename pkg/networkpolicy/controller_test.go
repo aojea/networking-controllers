@@ -15,18 +15,14 @@ import (
 
 var alwaysReady = func() bool { return true }
 
-type fakeNetworkPolicer struct {
+type fakeReconciler struct {
 	Policy Policy
 }
 
-func (f fakeNetworkPolicer) Apply(policy Policy) error {
+func (f fakeReconciler) Reconcile(name string, policy Policy) error {
 	if !reflect.DeepEqual(policy, f.Policy) {
 		return fmt.Errorf("policies doesn't match %+v %+v", policy, f.Policy)
 	}
-	return nil
-}
-
-func (f fakeNetworkPolicer) Remove(name string) error {
 	return nil
 }
 
@@ -44,7 +40,7 @@ func newController() *networkpolicyController {
 		informersFactory.Networking().V1().NetworkPolicies(),
 		informersFactory.Core().V1().Namespaces(),
 		informersFactory.Core().V1().Pods(),
-		fakeNetworkPolicer{},
+		fakeReconciler{},
 	)
 	controller.networkpoliciesSynced = alwaysReady
 	controller.namespacesSynced = alwaysReady

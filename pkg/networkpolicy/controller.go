@@ -40,7 +40,7 @@ func NewController(client clientset.Interface,
 	networkpolicyInformer networkinginformers.NetworkPolicyInformer,
 	namespaceInformer coreinformers.NamespaceInformer,
 	podInformer coreinformers.PodInformer,
-	networkPolicer NetworkPolicer,
+	reconciler Reconciler,
 ) *Controller {
 	klog.V(4).Info("Creating event broadcaster")
 	broadcaster := record.NewBroadcaster()
@@ -50,7 +50,7 @@ func NewController(client clientset.Interface,
 
 	c := &Controller{
 		client:           client,
-		networkPolicer:   networkPolicer,
+		reconciler:       reconciler,
 		queue:            workqueue.NewNamedRateLimitingQueue(workqueue.DefaultControllerRateLimiter(), controllerName),
 		workerLoopPeriod: time.Second,
 	}
@@ -108,7 +108,7 @@ type Controller struct {
 	podsSynced            cache.InformerSynced
 
 	// interface to apply network policies to the data plane
-	networkPolicer NetworkPolicer
+	reconciler Reconciler
 
 	// rate limited queue
 	queue workqueue.RateLimitingInterface
@@ -212,7 +212,7 @@ func (c *Controller) syncNetworkPolicy(key string) error {
 
 	// Delete the network policy, it no longer exists
 	if err != nil {
-		return c.networkPolicer.Remove(key)
+		return c.reconciler.Reconcile(key, Policy{})
 	}
 
 	// Get desired state for the network policy
@@ -433,7 +433,7 @@ func (c *Controller) syncNetworkPolicy(key string) error {
 			}
 		}
 	}
-	return c.networkPolicer.Apply(newPolicy)
+	return c.reconciler.Reconcile(key, newPolicy)
 }
 
 // handlers

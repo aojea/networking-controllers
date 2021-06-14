@@ -2,12 +2,11 @@ package networkpolicy
 
 import v1 "k8s.io/api/core/v1"
 
-type NetworkPolicer interface {
-	Apply(policy Policy) error
-	Remove(name string) error
+type Reconciler interface {
+	Reconcile(name string, policy Policy) error
 }
 
-// Policy is defined by a set of ACLs and a default action
+// Policy consist in a set of ACLs and a default action
 // ACLs are not ordered and the result should be the union of them
 type Policy struct {
 	Name          string
@@ -16,6 +15,7 @@ type Policy struct {
 }
 
 // ACL defines an access list action
+// empty values mean all
 type ACL struct {
 	source          []string
 	sourcePort      []int
